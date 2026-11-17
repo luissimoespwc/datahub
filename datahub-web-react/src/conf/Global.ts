@@ -45,6 +45,7 @@ export enum PageRoutes {
     SEMANTIC_MODEL_ENTITY = '/semanticModel',
     MARKETPLACE = '/marketplace',
     DATA_PRODUCT_ENTITY = '/dataProduct',
+    ENTERPRISE_MARKETPLACE = '/enterprise-marketplace',
 }
 
 export enum HelpLinkRoutes {

@@ -1,0 +1,46 @@
+
+---
+description: Frontend conventions for the customized DataHub Core React application and Enterprise Data Product Marketplace.
+globs: datahub-web-react/**
+alwaysApply: false
+---
+
+# DataHub frontend customization
+
+## Scope and source of truth
+- Applies to the `datahub-web-react/` directory of our pinned DataHub OSS fork.
+- Before changes, inspect the actual components, state-management patterns, routing, GraphQL operations, build commands, and tests in this DataHub revision. Do not assume the upstream frontend architecture is unchanged between releases.
+- Follow the existing repository's conventions and tooling (TypeScript, React, styling, formatting, testing) before introducing new libraries or patterns.
+- Check `marketplace-platform/docs/architecture.md` for cross-service boundaries when accessible; do not assume cross-root rules automatically apply to this repository.
+
+## Preserve upstream compatibility
+- Prefer adding isolated marketplace routes, components, and adapters over rewriting DataHub core screens or shared packages.
+- Reuse existing DataHub UI primitives, GraphQL client, routing, authorization controls, and session handling where they fit.
+- Do not edit `metadata-service/`, `datahub-graphql-core/`, or generated GraphQL/API code as part of a UI task without an explicit, approved cross-repository change.
+- Do not change upstream authentication flows, token management, GraphQL schemas, or metadata semantics just to simplify a frontend feature.
+- Document unavoidable upstream-file modifications and why extension or composition was insufficient. Keep diffs small to ease future merges.
+
+## Marketplace UI behavior
+- Implement product discovery, search, filters, details, ownership, domains, and asset relationships using DataHub metadata and existing APIs where available.
+- Separate marketplace business workflows (access requests, approvals, subscriptions) from catalog metadata. Use the marketplace service API for workflow actions, not invented DataHub GraphQL mutations.
+- Introduce a typed service/adapter boundary around marketplace API calls. Keep network logic out of presentational components.
+- Support loading, empty, error, unauthorized, and partial-data states. Do not silently treat failed access checks as empty results.
+- Do not present mock product data as if it came from a connected DataHub instance; mark demos and fixtures explicitly.
+
+## Security and permissions
+- Preserve the existing OIDC/session model and route requests through the established authenticated server/backend boundary.
+- Never place personal access tokens, client secrets, service credentials, or privileged GMS calls in browser code.
+- Do not rely on hidden buttons or frontend-only filtering as authorization. Marketplace API and/or GMS must enforce relevant permissions server-side.
+- DataHub Core search results may require additional authorization-aware filtering; do not assume that discovery results are permission-filtered for sensitive metadata.
+- Encode and validate user-controlled input; avoid unsafe HTML and leaking sensitive values in logs or analytics.
+
+## UI quality and tests
+- Use accessible labels, semantic controls, keyboard navigation, focus states, and readable error feedback.
+- Keep new components focused; prefer composition and existing patterns over monolithic pages.
+- Add tests for modified behavior, including loading, errors, missing metadata, unauthorized states, and key user journeys.
+- Run the smallest applicable repository lint/typecheck/test command and report what was actually executed.
+- For visual changes, verify desktop and narrow layouts; do not claim visual verification without checking rendered output.
+
+## Delivery expectations
+- Before implementation: identify the touched files and any DataHub version/API assumptions.
+- After implementation: summarize source changes, compatibility concerns, tests run, and any unverified behavior.

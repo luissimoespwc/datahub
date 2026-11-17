@@ -25,6 +25,7 @@ const BrowseResultsPage = lazyNamed(() => import('@app/browse/BrowseResultsPage'
 const BusinessAttributes = lazyNamed(() => import('@app/businessAttribute/BusinessAttributes'), 'BusinessAttributes');
 const ContextRoutes = lazyDefault(() => import('@app/context/ContextRoutes'));
 const DomainRoutesV2 = lazyDefault(() => import('@app/domainV2/DomainRoutes'));
+const EnterpriseMarketplacePage = lazyDefault(() => import('@app/enterpriseMarketplace/EnterpriseMarketplacePage'));
 const ManageDomainsPageV2 = lazyNamed(() => import('@app/domainV2/ManageDomainsPage'), 'ManageDomainsPage');
 const EntityPageV2 = lazyNamed(() => import('@app/entityV2/EntityPage'), 'EntityPage');
 const GlossaryRoutesV2 = lazyDefault(() => import('@app/glossaryV2/GlossaryRoutes'));
@@ -119,6 +120,7 @@ export const SearchRoutes = (): JSX.Element => {
                             path={[`${PageRoutes.DATA_PRODUCT_ENTITY}/:urn`, PageRoutes.MARKETPLACE]}
                             render={() => <MarketplaceRoutes />}
                         />
+                        <Route path={PageRoutes.ENTERPRISE_MARKETPLACE} render={() => <EnterpriseMarketplacePage />} />
                         <Route path={PageRoutes.SEARCH_RESULTS} render={() => <SearchPageV2 />} />
                         <Route path={PageRoutes.BROWSE_RESULTS} render={() => <BrowseResultsPage />} />
                         {showTags ? <Route path={PageRoutes.MANAGE_TAGS} render={() => <ManageTags />} /> : null}

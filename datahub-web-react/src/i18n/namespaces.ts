@@ -6,6 +6,7 @@ export const NAMESPACES = [
     'common.counts',
     'common.feedback',
     'common.labels',
+    'enterpriseMarketplace',
     'entity.form',
     'entity.identity',
     'entity.ownership',
