@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
-# full / slim / locked variants (see APP_ENV). Base OS: Alpine edge (OpenJDK 25 is not in a stable Alpine release).
-# The full variant has additional deps preinstalled, like a JRE. Oracle client and MSSQL ODBC are not ported off glibc.
+# full / slim / locked variants (see APP_ENV). Base OS: Debian bookworm (glibc) from the official Python 3.11 image.
+# Alpine (musl) cannot install the bundled ingestion venvs: most packages ship only glibc wheels, so they build from source.
+# The full variant adds a JRE, build tools, the Oracle Instant Client and the MSSQL ODBC driver.
 ARG APP_ENV=full
 ARG PYTHON_VERSION=3.11
-ARG BASE_IMAGE=alpine:edge
+ARG BASE_IMAGE=python:3.11-slim-bookworm
 
 # INLINE-BEGIN @/docker/snippets/ingestion_base (Wolfi)
 # Stages:
@@ -16,8 +17,8 @@ FROM ${BASE_IMAGE} AS python-base
 ENV HOME=/home/datahub
 USER root
 
-RUN addgroup -g 1000 datahub && \
-    adduser -D -u 1000 -G datahub -h /home/datahub -s /bin/sh datahub && \
+RUN groupadd -g 1000 datahub && \
+    useradd -u 1000 -g datahub -d /home/datahub -s /bin/sh datahub && \
     mkdir -p $HOME && \
     chown -R datahub:datahub $HOME && \
     chmod g-s $HOME
@@ -25,19 +26,20 @@ RUN addgroup -g 1000 datahub && \
 ARG PYTHON_VERSION
 RUN test -n "${PYTHON_VERSION}"  # PYTHON_VERSION must be set
 
-# Alpine edge is rolling. Bump ALPINE_PKG_REFRESH to force a fresh apk upgrade.
-ARG ALPINE_PKG_REFRESH=2026-11-18
-ARG APK_REPOSITORY_URL=https://dl-cdn.alpinelinux.org/alpine/edge/main
+# Debian bookworm is pinned by the base image tag. Bump DEBIAN_PKG_REFRESH to force a fresh apt install.
+ARG DEBIAN_PKG_REFRESH=2026-11-19
 COPY docker/snippets/extra-ca.crt /tmp/extra-ca.crt
-COPY docker/snippets/prepare_apk_repos.sh /tmp/prepare_apk_repos.sh
-RUN chmod +x /tmp/prepare_apk_repos.sh && /tmp/prepare_apk_repos.sh && rm -f /tmp/prepare_apk_repos.sh
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    echo "alpine pkg refresh: ${ALPINE_PKG_REFRESH}" && \
-    apk add --no-cache --update-cache \
-    ca-certificates \
-    python3 \
-    python3-dev \
-    uv \
+# Corporate TLS inspection: trust the CA for apt-fetched packages, pip and uv (which read the system bundle via SSL_CERT_FILE).
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    echo "debian pkg refresh: ${DEBIAN_PKG_REFRESH}" && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    if [ -s /tmp/extra-ca.crt ]; then \
+      cp /tmp/extra-ca.crt /usr/local/share/ca-certificates/extra-ca.crt && \
+      update-ca-certificates; \
+    fi && \
+    rm -f /tmp/extra-ca.crt && \
+    apt-get install -y --no-install-recommends \
     git \
     wget \
     curl \
@@ -46,14 +48,16 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     bash \
     openssh-client
 
+# uv from PyPI as root into the image's Python. The locked variant removes it again.
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt
+RUN python3 -m pip install --no-cache-dir uv
+
 # PAM's unix_chkpwd is setuid/setgid in many images for interactive logins. This container does
 # not rely on PAM password checks; clearing bits avoids ABC/DoD-style SUID-SGID file findings
 # (e.g. suid_or_guid_set on /usr/bin/unix_chkpwd) without affecting the DataHub app runtime.
 RUN for f in /usr/bin/unix_chkpwd /usr/sbin/unix_chkpwd; do \
     if [ -f "$f" ]; then chmod u-s,g-s "$f"; fi; \
   done
-
-RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 # OpenSSL 4 drops ssl.PROTOCOL_TLSv1. sitecustomize restores it for this
 # interpreter and every venv created from it, including bundled ingestion
@@ -65,7 +69,7 @@ RUN python3 -c 'import pathlib, shutil, sysconfig; dest = pathlib.Path(sysconfig
 
 USER datahub
 WORKDIR $HOME
-RUN uv venv --python /usr/bin/python3
+RUN uv venv --python /usr/local/bin/python3
 # Pre-create as datahub so BuildKit cache mounts at $HOME/.cache/uv do not leave
 # the parent root-owned (siblings like puccinialin then hit PermissionError).
 RUN mkdir -p $HOME/.cache
@@ -93,16 +97,18 @@ RUN --mount=type=bind,source=./docker/snippets/uv,target=/tmp/uv-config \
 FROM python-base AS ingestion-base-slim
 
 USER 0
-# Alpine package names. glibc-only pieces (Oracle Instant Client, msodbcsql18) are not installed here.
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    apk add --no-cache --update-cache \
-    openldap-dev \
-    cyrus-sasl-dev \
-    krb5 \
-    krb5-dev \
-    krb5-libs \
+# LDAP/SASL/Kerberos headers for the ingestion sources, librdkafka, and unixODBC.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    libldap2-dev \
+    libsasl2-dev \
+    libsasl2-modules-gssapi-mit \
+    krb5-user \
+    libkrb5-dev \
     librdkafka-dev \
-    openldap-clients \
+    ldap-utils \
+    libaio1 \
+    libaio-dev \
     unixodbc \
     unixodbc-dev
 USER datahub
@@ -111,15 +117,12 @@ FROM ingestion-base-slim AS ingestion-base-full
 
 USER 0
 COPY docker/snippets/setup_java_runtime.sh /tmp/setup_java_runtime_major.sh
-# JRE on PATH for layertools/builds; JAVA_MAJOR is read from setup_java_runtime.sh (same source as service images).
-# build-base pulls gcc, make and musl-dev on Alpine.
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    JAVA_MAJOR=$(grep -E '^JAVA_MAJOR=[0-9]+$' /tmp/setup_java_runtime_major.sh | head -1 | cut -d= -f2) \
-    && test -n "${JAVA_MAJOR}" \
-    && apk add --no-cache --update-cache \
-    "openjdk${JAVA_MAJOR}-jre" \
-    build-base \
-    && ln -sf "/usr/lib/jvm/java-${JAVA_MAJOR}-openjdk/bin/java" /usr/bin/java \
+# Debian's default JRE (bookworm ships OpenJDK 17). The service images use JAVA_MAJOR=25 from setup_java_runtime.sh,
+# which bookworm does not package, so the actions image runs on a different JRE major.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    default-jre-headless \
+    build-essential \
     && rm -f /tmp/setup_java_runtime_major.sh
 
 RUN --mount=type=bind,source=./docker/snippets/oracle_instantclient.sh,target=/oracle_instantclient.sh \
@@ -511,11 +514,9 @@ RUN chmod 755 /tmp/strip_pip_uv_from_venvs.sh
 USER datahub
 RUN sh /tmp/strip_pip_uv_from_venvs.sh
 USER 0
-# py3-pip-wheel pulls in a bootstrap pip wheel; it cannot be apk-removed while python-* is
-# installed. Locked images strip pip/uv and block network — delete the wheel file only here
-# (CVE-2026-3219: bundled pip wheel surface).
-RUN rm -f /tmp/strip_pip_uv_from_venvs.sh && apk del --no-cache uv && \
-    rm -f /usr/share/python-wheels/pip-*.whl
+# Locked images strip pip/uv and block network. Uninstall them from the image Python
+# (CVE-2026-3219: bundled pip surface).
+RUN rm -f /tmp/strip_pip_uv_from_venvs.sh && python3 -m pip uninstall -y uv pip
 USER datahub
 
 # Defense in depth: if any pip/uv-style tool is reintroduced, default index URL is unusable.
