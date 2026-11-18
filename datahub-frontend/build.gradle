@@ -132,6 +132,8 @@ def prepareDockerContext = tasks.register('prepareDockerContext', Sync) {
   from(rootProject.projectDir) {
     include '.dockerignore'
     include 'docker/snippets/setup_java_runtime.sh'
+    include 'docker/snippets/prepare_apk_repos.sh'
+    include 'docker/snippets/extra-ca.crt'
     include 'docker/monitoring/client-prometheus-config.yaml'
     include 'docker/datahub-frontend/start.sh'
     include 'datahub-frontend/conf/mfe.*.yaml'
