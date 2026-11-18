@@ -28,8 +28,13 @@ case "$url" in
 esac
 
 apk update --no-cache
+# The base image has no ca-certificates package, so update-ca-certificates
+# does not exist yet. Install it while the appended corporate CA is still
+# in the bundle, then upgrade (which can replace the bundle).
+if [ -s /usr/local/share/ca-certificates/extra-ca.crt ]; then
+  apk add --no-cache ca-certificates
+fi
 apk upgrade --no-cache
-# apk upgrade rewrites the bundle. Put the corporate CA back.
 if [ -s /usr/local/share/ca-certificates/extra-ca.crt ]; then
   update-ca-certificates
 fi
