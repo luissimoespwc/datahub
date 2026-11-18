@@ -28,7 +28,8 @@ case "$JAVA_MAJOR" in '' | *[!0-9]*)
   ;;
 esac
 
-JAVA_JRE_PKG="openjdk-${JAVA_MAJOR}-jre"
+# Alpine names the package openjdk25-jre. Wolfi used openjdk-25-jre.
+JAVA_JRE_PKG="openjdk${JAVA_MAJOR}-jre"
 JAVA_VM_HOME="/usr/lib/jvm/java-${JAVA_MAJOR}-openjdk"
 
 apk add --no-cache \

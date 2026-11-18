@@ -1,19 +1,20 @@
 # Defining environment
 ARG APP_ENV=prod
 
-ARG BASE_IMAGE=cgr.dev/chainguard/wolfi-base:latest
+ARG BASE_IMAGE=alpine:edge
 FROM ${BASE_IMAGE} AS base
 
 # Defining custom repo urls for use in enterprise environments. Re-used between stages below.
-ARG APK_REPOSITORY_URL=https://apk.cgr.dev/chainguard
+# OpenJDK 25 is in Alpine edge community. prepare_apk_repos.sh adds community from this URL.
+ARG APK_REPOSITORY_URL=https://dl-cdn.alpinelinux.org/alpine/edge/main
 ARG GITHUB_REPO_URL=https://github.com
 ARG MAVEN_CENTRAL_REPO_URL=https://repo1.maven.org/maven2
 
 ENV JMX_VERSION=1.0.1
 
-RUN printf '%s\n' "${APK_REPOSITORY_URL}" > /etc/apk/repositories \
-    && apk update --no-cache \
-    && apk upgrade --no-cache
+COPY docker/snippets/extra-ca.crt /tmp/extra-ca.crt
+COPY docker/snippets/prepare_apk_repos.sh /tmp/prepare_apk_repos.sh
+RUN chmod +x /tmp/prepare_apk_repos.sh && /tmp/prepare_apk_repos.sh && rm -f /tmp/prepare_apk_repos.sh
 
 COPY docker/snippets/setup_java_runtime.sh /tmp/setup_java_runtime.sh
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \

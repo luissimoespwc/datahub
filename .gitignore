@@ -177,6 +177,9 @@ metadata-ingestion/tests/integration/oracle/.tls/
 # Git credentials (should never be committed)
 .git-credentials
 
+# Corporate CA bundle for image builds behind TLS inspection. Not a public cert.
+docker/snippets/extra-ca.crt
+
 # Git Worktree management (wtp)
 .wtp.yml
 

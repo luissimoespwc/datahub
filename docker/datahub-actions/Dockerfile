@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-# full / slim / locked variants (see APP_ENV). Base OS: Wolfi (Chainguard); override via BASE_IMAGE.
-# The full variant has additional deps preinstalled, like a JRE, Oracle client, and MSSQL ODBC driver.
+# full / slim / locked variants (see APP_ENV). Base OS: Alpine edge (OpenJDK 25 is not in a stable Alpine release).
+# The full variant has additional deps preinstalled, like a JRE. Oracle client and MSSQL ODBC are not ported off glibc.
 ARG APP_ENV=full
 ARG PYTHON_VERSION=3.11
-ARG BASE_IMAGE=cgr.dev/chainguard/wolfi-base:latest
+ARG BASE_IMAGE=alpine:edge
 
 # INLINE-BEGIN @/docker/snippets/ingestion_base (Wolfi)
 # Stages:
@@ -25,21 +25,18 @@ RUN addgroup -g 1000 datahub && \
 ARG PYTHON_VERSION
 RUN test -n "${PYTHON_VERSION}"  # PYTHON_VERSION must be set
 
-# Cache-bust the python apk layer. Wolfi is a rolling distro, so a cached build layer
-# can keep shipping a stale, vulnerable package set even after upstream fixes it (a
-# stale cache shipped setuptools 70.3.0 / CVE-2025-47273 at /usr/share/python-wheels/;
-# current Wolfi ships a fixed setuptools). Bump WOLFI_PKG_REFRESH to force a fresh
-# `apk upgrade` + `apk add` whenever base packages need refreshing. `apk add` alone
-# never upgrades packages already installed (from wolfi-base or earlier steps), so
-# the upgrade keeps the whole OS package set current.
-ARG WOLFI_PKG_REFRESH=2026-10-27
+# Alpine edge is rolling. Bump ALPINE_PKG_REFRESH to force a fresh apk upgrade.
+ARG ALPINE_PKG_REFRESH=2026-11-18
+ARG APK_REPOSITORY_URL=https://dl-cdn.alpinelinux.org/alpine/edge/main
+COPY docker/snippets/extra-ca.crt /tmp/extra-ca.crt
+COPY docker/snippets/prepare_apk_repos.sh /tmp/prepare_apk_repos.sh
+RUN chmod +x /tmp/prepare_apk_repos.sh && /tmp/prepare_apk_repos.sh && rm -f /tmp/prepare_apk_repos.sh
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    echo "wolfi pkg refresh: ${WOLFI_PKG_REFRESH}" && \
-    apk upgrade --no-cache --update-cache && \
+    echo "alpine pkg refresh: ${ALPINE_PKG_REFRESH}" && \
     apk add --no-cache --update-cache \
     ca-certificates \
-    python-${PYTHON_VERSION} \
-    python-${PYTHON_VERSION}-dev \
+    python3 \
+    python3-dev \
     uv \
     git \
     wget \
@@ -56,8 +53,7 @@ RUN for f in /usr/bin/unix_chkpwd /usr/sbin/unix_chkpwd; do \
     if [ -f "$f" ]; then chmod u-s,g-s "$f"; fi; \
   done
 
-RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
-    ln -sf /usr/bin/python3 /usr/bin/python
+RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 # OpenSSL 4 drops ssl.PROTOCOL_TLSv1. sitecustomize restores it for this
 # interpreter and every venv created from it, including bundled ingestion
@@ -69,7 +65,7 @@ RUN python3 -c 'import pathlib, shutil, sysconfig; dest = pathlib.Path(sysconfig
 
 USER datahub
 WORKDIR $HOME
-RUN uv venv --python "${PYTHON_VERSION}"
+RUN uv venv --python /usr/bin/python3
 # Pre-create as datahub so BuildKit cache mounts at $HOME/.cache/uv do not leave
 # the parent root-owned (siblings like puccinialin then hit PermissionError).
 RUN mkdir -p $HOME/.cache
@@ -97,24 +93,16 @@ RUN --mount=type=bind,source=./docker/snippets/uv,target=/tmp/uv-config \
 FROM python-base AS ingestion-base-slim
 
 USER 0
-# cyrus-sasl-mit-* avoids Heimdal SASL (cyrus-sasl-libs resolves via provides:).
-# glibc-iconv: gconv modules required for msodbcsql18 iconv (without it, ODBC init fails with IM004).
-# libssl3: msodbcsql18 dlopens libssl.so.3. The RPM is installed with --nodeps, so
-# OpenSSL 3 must be declared here; it otherwise arrives only via libldap and rpm-sequoia.
+# Alpine package names. glibc-only pieces (Oracle Instant Client, msodbcsql18) are not installed here.
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     apk add --no-cache --update-cache \
-    openldap-2.6-dev \
-    cyrus-sasl-mit-dev \
-    cyrus-sasl-mit-libs \
-    glibc-iconv \
-    libssl3 \
+    openldap-dev \
+    cyrus-sasl-dev \
     krb5 \
     krb5-dev \
     krb5-libs \
-    libaio-dev \
-    libaio \
     librdkafka-dev \
-    openldap-2.6-clients \
+    openldap-clients \
     unixodbc \
     unixodbc-dev
 USER datahub
@@ -124,12 +112,12 @@ FROM ingestion-base-slim AS ingestion-base-full
 USER 0
 COPY docker/snippets/setup_java_runtime.sh /tmp/setup_java_runtime_major.sh
 # JRE on PATH for layertools/builds; JAVA_MAJOR is read from setup_java_runtime.sh (same source as service images).
-# build-base pulls gcc (includes g++ driver), make, binutils, glibc-dev on Wolfi; there is no separate g++ apk.
+# build-base pulls gcc, make and musl-dev on Alpine.
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     JAVA_MAJOR=$(grep -E '^JAVA_MAJOR=[0-9]+$' /tmp/setup_java_runtime_major.sh | head -1 | cut -d= -f2) \
     && test -n "${JAVA_MAJOR}" \
     && apk add --no-cache --update-cache \
-    "openjdk-${JAVA_MAJOR}-jre" \
+    "openjdk${JAVA_MAJOR}-jre" \
     build-base \
     && ln -sf "/usr/lib/jvm/java-${JAVA_MAJOR}-openjdk/bin/java" /usr/bin/java \
     && rm -f /tmp/setup_java_runtime_major.sh
